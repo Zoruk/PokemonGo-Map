@@ -17,27 +17,27 @@ Search Architecture:
    - Shares a global lock for map parsing
 '''
 
+import json
 import logging
 import math
-import json
 import os
 import random
 import time
-import geopy
-import geopy.distance
-
+from datetime import datetime
 from operator import itemgetter
 from threading import Thread, Lock
-from queue import Queue, Empty
 
+import geopy
+import geopy.distance
 from pgoapi import PGoApi
-from pgoapi.utilities import f2i
 from pgoapi import utilities as util
 from pgoapi.exceptions import AuthException
+from pgoapi.utilities import f2i
+from queue import Queue, Empty
 
-from .models import parse_map, Pokemon
-from .fakePogoApi import FakePogoApi
 import terminalsize
+from .fakePogoApi import FakePogoApi
+from .models import parse_map, Pokemon, WorkerStatus, MainWorker
 
 log = logging.getLogger(__name__)
 
@@ -231,6 +231,35 @@ def status_printer(threadStatus, search_items_queue, db_updates_queue, wh_queue)
         time.sleep(1)
 
 
+def worker_status_db_thread(threads_status, name, db_updates_queue):
+    while True:
+        workers = {}
+        overseer = None
+        for status in threads_status.values():
+            if status['type'] == 'Overseer':
+                overseer = {
+                    'worker_name': name,
+                    'message': status['message'],
+                    'method': status['method'],
+                    'last_modified': datetime.utcnow()
+                }
+            if status['type'] == 'Worker':
+                workers[status['username']] = {
+                    'username': status['username'],
+                    'worker_name': name,
+                    'success': status['success'],
+                    'fail': status['fail'],
+                    'no_items': status['noitems'],
+                    'skip': status['skip'],
+                    'last_modified': datetime.utcnow(),
+                    'message': status['message']
+                }
+        if overseer is not None:
+            db_updates_queue.put((MainWorker, {0: overseer}))
+            db_updates_queue.put((WorkerStatus, workers))
+        time.sleep(3)
+
+
 # The main search loop that keeps an eye on the over all process
 def search_overseer_thread(args, new_location_queue, pause_bit, encryption_lib_path, db_updates_queue, wh_queue):
 
@@ -253,15 +282,25 @@ def search_overseer_thread(args, new_location_queue, pause_bit, encryption_lib_p
         t.daemon = True
         t.start()
 
+    if args.status_name is not None:
+        log.info('Starting status database thread')
+        t = Thread(target=worker_status_db_thread,
+                   name='status_worker_db',
+                   args=(threadStatus, args.status_name, db_updates_queue))
+        t.daemon = True
+        t.start()
+
     # Create a search_worker_thread per account
     log.info('Starting search worker threads')
     for i, account in enumerate(args.accounts):
         log.debug('Starting search worker thread %d for user %s', i, account['username'])
         threadStatus['Worker {:03}'.format(i)] = {}
+        threadStatus['Worker {:03}'.format(i)]['username'] = account['username']
         threadStatus['Worker {:03}'.format(i)]['type'] = "Worker"
         threadStatus['Worker {:03}'.format(i)]['message'] = "Creating thread..."
         threadStatus['Worker {:03}'.format(i)]['success'] = 0
         threadStatus['Worker {:03}'.format(i)]['fail'] = 0
+        threadStatus['Worker {:03}'.format(i)]['skip'] = 0
         threadStatus['Worker {:03}'.format(i)]['noitems'] = 0
 
         t = Thread(target=search_worker_thread,
@@ -379,11 +418,20 @@ def search_overseer_thread_ss(args, new_location_queue, pause_bit, encryption_li
         t.daemon = True
         t.start()
 
+    if args.status_name is not None:
+        log.info('Starting status database thread')
+        t = Thread(target=worker_status_db_thread,
+                   name='status_worker_db',
+                   args=(threadStatus, args.status_name, db_updates_queue))
+        t.daemon = True
+        t.start()
+
     # Create a search_worker_thread_ss per account
     log.info('Starting search worker threads')
     for i, account in enumerate(args.accounts):
         log.debug('Starting search worker thread %d for user %s', i, account['username'])
         threadStatus['Worker {:03}'.format(i)] = {}
+        threadStatus['Worker {:03}'.format(i)]['username'] = account['username']
         threadStatus['Worker {:03}'.format(i)]['type'] = "Worker"
         threadStatus['Worker {:03}'.format(i)]['message'] = "Creating thread..."
         threadStatus['Worker {:03}'.format(i)]['success'] = 0
