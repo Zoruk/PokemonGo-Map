@@ -78,22 +78,22 @@ class PokemonBaseModel(BaseModel):
     longitude = DoubleField()
     disappear_time = DateTimeField(index=True)
 
-    @staticmethod
-    def _get_active(base, swLat, swLng, neLat, neLng):
+    @classmethod
+    def get_active(cls, swLat, swLng, neLat, neLng):
 
         if swLat is None or swLng is None or neLat is None or neLng is None:
-            query = (base
+            query = (cls
                      .select()
-                     .where(base.disappear_time > datetime.utcnow())
+                     .where(cls.disappear_time > datetime.utcnow())
                      .dicts())
         else:
-            query = (base
+            query = (cls
                      .select()
-                     .where((base.disappear_time > datetime.utcnow()) &
-                            (base.latitude >= swLat) &
-                            (base.longitude >= swLng) &
-                            (base.latitude <= neLat) &
-                            (base.longitude <= neLng))
+                     .where((cls.disappear_time > datetime.utcnow()) &
+                            (cls.latitude >= swLat) &
+                            (cls.longitude >= swLng) &
+                            (cls.latitude <= neLat) &
+                            (cls.longitude <= neLng))
                      .dicts())
 
         pokemons = []
@@ -108,23 +108,23 @@ class PokemonBaseModel(BaseModel):
 
         return pokemons
 
-    @staticmethod
-    def _get_active_by_id(base, ids, swLat, swLng, neLat, neLng):
+    @classmethod
+    def get_active_by_id(cls, ids, swLat, swLng, neLat, neLng):
         if swLat is None or swLng is None or neLat is None or neLng is None:
-            query = (base
+            query = (cls
                      .select()
-                     .where((base.pokemon_id << ids) &
-                            (base.disappear_time > datetime.utcnow()))
+                     .where((cls.pokemon_id << ids) &
+                            (cls.disappear_time > datetime.utcnow()))
                      .dicts())
         else:
-            query = (base
+            query = (cls
                      .select()
-                     .where((base.pokemon_id << ids) &
-                            (base.disappear_time > datetime.utcnow()) &
-                            (base.latitude >= swLat) &
-                            (base.longitude >= swLng) &
-                            (base.latitude <= neLat) &
-                            (base.longitude <= neLng))
+                     .where((cls.pokemon_id << ids) &
+                            (cls.disappear_time > datetime.utcnow()) &
+                            (cls.latitude >= swLat) &
+                            (cls.longitude >= swLng) &
+                            (cls.latitude <= neLat) &
+                            (cls.longitude <= neLng))
                      .dicts())
 
         pokemons = []
@@ -139,42 +139,42 @@ class PokemonBaseModel(BaseModel):
 
         return pokemons
 
-
-class Pokemon(PokemonBaseModel):
-    spawnpoint_id = CharField(index=True)
-
-    class Meta:
-        indexes = ((('latitude', 'longitude'), False),)
-
-    @staticmethod
-    def get_active_by_id(ids, swLat, swLng, neLat, neLng):
-        return PokemonBaseModel._get_active_by_id(Pokemon, ids, swLat, swLng, neLat, neLng)
-
-    @staticmethod
-    def get_active(swLat, swLng, neLat, neLng):
-        return PokemonBaseModel._get_active(Pokemon, swLat, swLng, neLat, neLng)
+    @classmethod
+    def get_appearances(cls, pokemon_id, last_appearance):
+        query = (cls
+                 .select()
+                 .where((cls.pokemon_id == pokemon_id) &
+                        (cls.disappear_time > datetime.utcfromtimestamp(last_appearance / 1000.0))
+                        )
+                 .order_by(cls.disappear_time.asc())
+                 .dicts()
+                 )
+        appearances = []
+        for a in query:
+            appearances.append(a)
+        return appearances
 
     @classmethod
     def get_seen(cls, timediff):
         if timediff:
             timediff = datetime.utcnow() - timediff
-        pokemon_count_query = (Pokemon
-                               .select(Pokemon.pokemon_id,
-                                       fn.COUNT(Pokemon.pokemon_id).alias('count'),
-                                       fn.MAX(Pokemon.disappear_time).alias('lastappeared')
+        pokemon_count_query = (cls
+                               .select(cls.pokemon_id,
+                                       fn.COUNT(cls.pokemon_id).alias('count'),
+                                       fn.MAX(cls.disappear_time).alias('lastappeared')
                                        )
-                               .where(Pokemon.disappear_time > timediff)
-                               .group_by(Pokemon.pokemon_id)
+                               .where(cls.disappear_time > timediff)
+                               .group_by(cls.pokemon_id)
                                .alias('counttable')
                                )
-        query = (Pokemon
-                 .select(Pokemon.pokemon_id,
-                         Pokemon.disappear_time,
-                         Pokemon.latitude,
-                         Pokemon.longitude,
+        query = (cls
+                 .select(cls.pokemon_id,
+                         cls.disappear_time,
+                         cls.latitude,
+                         cls.longitude,
                          pokemon_count_query.c.count)
-                 .join(pokemon_count_query, on=(Pokemon.pokemon_id == pokemon_count_query.c.pokemon_id))
-                 .where(Pokemon.disappear_time == pokemon_count_query.c.lastappeared)
+                 .join(pokemon_count_query, on=(cls.pokemon_id == pokemon_count_query.c.pokemon_id))
+                 .where(cls.disappear_time == pokemon_count_query.c.lastappeared)
                  .dicts()
                  )
         pokemons = []
@@ -186,20 +186,12 @@ class Pokemon(PokemonBaseModel):
 
         return {'pokemon': pokemons, 'total': total}
 
-    @classmethod
-    def get_appearances(cls, pokemon_id, last_appearance):
-        query = (Pokemon
-                 .select()
-                 .where((Pokemon.pokemon_id == pokemon_id) &
-                        (Pokemon.disappear_time > datetime.utcfromtimestamp(last_appearance / 1000.0))
-                        )
-                 .order_by(Pokemon.disappear_time.asc())
-                 .dicts()
-                 )
-        appearances = []
-        for a in query:
-            appearances.append(a)
-        return appearances
+
+class Pokemon(PokemonBaseModel):
+    spawnpoint_id = CharField(index=True)
+
+    class Meta:
+        indexes = ((('latitude', 'longitude'), False),)
 
     @classmethod
     def get_spawnpoints(cls, swLat, swLng, neLat, neLng):
@@ -279,14 +271,6 @@ class LurePokemon(PokemonBaseModel):
 
     class Meta:
         indexes = ((('latitude', 'longitude'), False),)
-
-    @staticmethod
-    def get_active_by_id(ids, swLat, swLng, neLat, neLng):
-        return PokemonBaseModel._get_active_by_id(LurePokemon, ids, swLat, swLng, neLat, neLng)
-
-    @staticmethod
-    def get_active(swLat, swLng, neLat, neLng):
-        return PokemonBaseModel._get_active(LurePokemon, swLat, swLng, neLat, neLng)
 
 
 class Pokestop(BaseModel):
