@@ -14,7 +14,7 @@ from datetime import timedelta
 from collections import OrderedDict
 
 from . import config
-from .models import Pokemon, Gym, Pokestop, ScannedLocation, MainWorker, WorkerStatus
+from .models import Pokemon, LurePokemon, Gym, Pokestop, ScannedLocation, MainWorker, WorkerStatus
 
 log = logging.getLogger(__name__)
 compress = Compress()
@@ -91,6 +91,14 @@ class Pogom(Flask):
             else:
                 d['pokemons'] = Pokemon.get_active(swLat, swLng, neLat, neLng)
 
+        if request.args.get('lurePokemon', 'true') == 'true':
+            if request.args.get('ids'):
+                ids = [int(x) for x in request.args.get('ids').split(',')]
+                d['lurePokemons'] = LurePokemon.get_active_by_id(ids, swLat, swLng,
+                                                                 neLat, neLng)
+            else:
+                d['lurePokemons'] = LurePokemon.get_active(swLat, swLng, neLat, neLng)
+
         if request.args.get('pokestops', 'true') == 'true':
             d['pokestops'] = Pokestop.get_stops(swLat, swLng, neLat, neLng)
 
@@ -112,15 +120,6 @@ class Pogom(Flask):
 
         if request.args.get('spawnpoints', 'false') == 'true':
             d['spawnpoints'] = Pokemon.get_spawnpoints(swLat, swLng, neLat, neLng)
-
-        if request.args.get('status', 'false') == 'true':
-            args = get_args()
-            d = {}
-            if args.status_page_password is None:
-                d['error'] = 'Access denied'
-            elif request.args.get('password', None) == args.status_page_password:
-                d['main_workers'] = MainWorker.get_all()
-                d['workers'] = WorkerStatus.get_all()
 
         return jsonify(d)
 
